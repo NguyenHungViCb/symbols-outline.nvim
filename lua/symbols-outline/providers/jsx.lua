@@ -1,26 +1,21 @@
 local M = {}
 
-local SYMBOL_COMPONENT = 27
-local SYMBOL_FRAGMENT = 28
-
 function M.should_use_provider(bufnr)
-  -- local ft = vim.api.nvim_buf_get_option(bufnr, 'ft')
-  -- local has_ts, parsers = pcall(require, 'nvim-treesitter.parsers')
-  -- local _, has_parser = pcall(function()
-  --   if has_ts then
-  --     return parsers.get_parser(bufnr) ~= nil
-  --   end
+  local ft = vim.api.nvim_buf_get_option(bufnr, 'ft')
+  local has_ts, parsers = pcall(require, 'nvim-treesitter.parsers')
+  local _, has_parser = pcall(function()
+    if has_ts then
+      return parsers.get_parser(bufnr) ~= nil
+    end
 
-  --   return false
-  -- end)
+    return false
+  end)
 
-  -- return has_ts
-  --   and has_parser
-  --   and (
-  --     string.match(ft, 'typescriptreact')
-  --     or string.match(ft, 'javascriptreact')
-  --   )
-  return false
+  return has_ts
+    and has_parser
+    and (
+      string.match(ft, 'typescriptreact') or string.match(ft, 'javascriptreact')
+    )
 end
 
 function M.hover_info(_, _, on_info)
@@ -32,49 +27,11 @@ function M.hover_info(_, _, on_info)
   })
 end
 
-local function get_open_tag(node)
-  if node:type() == 'jsx_element' then
-    for _, outer in ipairs(node:field 'open_tag') do
-      if outer:type() == 'jsx_opening_element' then
-        return outer
-      end
-    end
-  end
-
-  return nil
-end
-
-local function jsx_node_detail(node, buf)
-  node = get_open_tag(node) or node
-
-  local param_nodes = node:field 'attribute'
-  if #param_nodes == 0 then
-    return nil
-  end
-
-  local res = '{ '
-    .. table.concat(
-      vim.tbl_map(function(el)
-        local a, b, c, d = el:range()
-        local text = vim.api.nvim_buf_get_text(buf, a, b, c, d, {})
-        return text[1]
-      end, param_nodes),
-      ' '
-    )
-    .. ' }'
-
-  return res
-end
-
-local function jsx_node_tagname(node, buf)
-  local tagnode = get_open_tag(node) or node
-
+local function get_name(node, type, buf)
   local identifier = nil
 
-  for _, val in ipairs(tagnode:field 'name') do
-    if val:type() == 'identifier' then
-      identifier = val
-    end
+  for _, val in ipairs(node:field(type)) do
+    identifier = val
   end
 
   if identifier then
@@ -83,50 +40,88 @@ local function jsx_node_tagname(node, buf)
     local name = table.concat(text)
     return name
   end
+
+  return nil
 end
 
-local function convert_ts(child, children, bufnr)
-  local is_frag = (child:type() == 'jsx_fragment')
-
-  local a, b, c, d = child:range()
+local propertyPair = {
+  variable_declarator = {
+    kind_prop = 13,
+    name_prop = 'name',
+  },
+  call_expression = {
+    kind_prop = 12,
+    name_prop = 'function',
+  },
+  function_declaration = {
+    kind_prop = 12,
+    name_prop = 'name',
+  },
+  jsx_element = {
+    kind_prop = 27,
+    name_prop = {
+      value = 'open_tag',
+      jsx_opening_element = {
+        kind_prop = 27,
+        name_prop = 'name',
+      },
+    },
+  },
+  jsx_self_closing_element = {
+    kind_prop = 27,
+    name_prop = 'name',
+  },
+  pair = {
+    kind_prop = 13,
+    name_prop = 'key',
+  },
+}
+local function convert(node, bufnr, pair)
+  node = node
+  local field = pair['name_prop']
+  local kind = pair['kind_prop']
+  if type(field) == 'table' then
+    for _, value in ipairs(node:field(field['value'])) do
+      if field ~= nil and field[value:type()] ~= nil then
+        field = field[value:type()]['name_prop']
+        kind = field[value:type()] and field[value:type()]['kind_prop'] or kind
+        node = value
+        break
+      end
+    end
+  end
+  local converted = {}
+  local a, b, c, d = node:range()
   local range = {
     start = { line = a, character = b },
     ['end'] = { line = c, character = d },
   }
+  local name = field and get_name(node, field, bufnr) or nil
 
-  local converted = {
-    name = (not is_frag and (jsx_node_tagname(child, bufnr) or '<unknown>'))
-      or 'fragment',
-    children = (#children > 0 and children) or nil,
-    kind = (is_frag and SYMBOL_FRAGMENT) or SYMBOL_COMPONENT,
-    detail = jsx_node_detail(child, bufnr),
+  converted = {
+    name = name and name or 'unknown',
+    children = nil,
     range = range,
+    kind = kind,
+    detail = nil,
     selectionRange = range,
   }
-
   return converted
 end
 
-local function parse_ts(root, children, bufnr)
+local function parse_ts(root, children, bufnr, pairs)
   children = children or {}
-
   for child in root:iter_children() do
-    if
-      vim.tbl_contains(
-        { 'jsx_element', 'jsx_self_closing_element' },
-        child:type()
-      )
-    then
+    if pairs[child:type()] ~= nil then
       local new_children = {}
-
-      parse_ts(child, new_children, bufnr)
-
-      table.insert(children, convert_ts(child, new_children, bufnr))
+      parse_ts(child, new_children, bufnr, pairs)
+      local converted = convert(child, bufnr, pairs[child:type()])
+      converted.children = new_children
+      table.insert(children, converted)
     else
-      parse_ts(child, children, bufnr)
+      parse_ts(child, children, bufnr, pairs)
     end
   end
-
   return children
 end
 
@@ -137,8 +132,8 @@ function M.request_symbols(on_symbols)
   local parser = parsers.get_parser(bufnr)
   local root = parser:parse()[1]:root()
 
-  local symbols = parse_ts(root, nil, bufnr)
-  -- local symbols = convert_ts(ctree)
+  local symbols = parse_ts(root, nil, bufnr, propertyPair)
+
   on_symbols { [1000000] = { result = symbols } }
 end
 
