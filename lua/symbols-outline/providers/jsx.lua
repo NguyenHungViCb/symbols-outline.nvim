@@ -4,22 +4,23 @@ local SYMBOL_COMPONENT = 27
 local SYMBOL_FRAGMENT = 28
 
 function M.should_use_provider(bufnr)
-  local ft = vim.api.nvim_buf_get_option(bufnr, 'ft')
-  local has_ts, parsers = pcall(require, 'nvim-treesitter.parsers')
-  local _, has_parser = pcall(function()
-    if has_ts then
-      return parsers.get_parser(bufnr) ~= nil
-    end
+  -- local ft = vim.api.nvim_buf_get_option(bufnr, 'ft')
+  -- local has_ts, parsers = pcall(require, 'nvim-treesitter.parsers')
+  -- local _, has_parser = pcall(function()
+  --   if has_ts then
+  --     return parsers.get_parser(bufnr) ~= nil
+  --   end
 
-    return false
-  end)
+  --   return false
+  -- end)
 
-  return has_ts
-    and has_parser
-    and (
-      string.match(ft, 'typescriptreact')
-      or string.match(ft, 'javascriptreact')
-    )
+  -- return has_ts
+  --   and has_parser
+  --   and (
+  --     string.match(ft, 'typescriptreact')
+  --     or string.match(ft, 'javascriptreact')
+  --   )
+  return false
 end
 
 function M.hover_info(_, _, on_info)
