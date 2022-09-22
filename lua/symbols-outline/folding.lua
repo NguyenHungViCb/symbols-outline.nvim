@@ -17,6 +17,8 @@ end
 M.is_folded = function(node)
   if node.folded ~= nil then
     return node.folded
+  elseif node.kind == 27 then
+    return false
   elseif node.hovered and config.options.auto_unfold_hover then
     return false
   else

@@ -75,6 +75,18 @@ local propertyPair = {
     kind_prop = 13,
     name_prop = 'key',
   },
+  assignment_expression = {
+    kind_prop = 13,
+    name_prop = 'left',
+  },
+  interface_declaration = {
+    kind_prop = 11,
+    name_prop = 'name',
+  },
+  property_signature = {
+    kind_prop = 7,
+    name_prop = 'name',
+  },
 }
 local function convert(node, bufnr, pair)
   node = node
